@@ -10,6 +10,7 @@ import sessionManager from './session.js';
 export class SSEServer {
   private app: express.Application;
   private mcpServer: MCPServerManager;
+  private transports: Map<string, any> = new Map();
 
   constructor() {
     this.app = express();
@@ -65,38 +66,35 @@ export class SSEServer {
       validateApiKey,
       async (req: Request, res: Response, next: NextFunction) => {
         try {
-          logger.info('SSE connection established', { ip: req.ip });
+          logger.info('SSE connection request received', { ip: req.ip });
 
           // Create session
           const session = sessionManager.createSession();
+          logger.info('Session created', { sessionId: session.id });
 
-          // Set SSE headers
-          res.setHeader('Content-Type', 'text/event-stream');
-          res.setHeader('Cache-Control', 'no-cache');
-          res.setHeader('Connection', 'keep-alive');
-          res.setHeader('X-Accel-Buffering', 'no'); // Disable nginx buffering
-
-          // Create MCP transport
-          await this.mcpServer.createTransport(req, res);
+          // Create MCP transport - this handles all SSE setup
+          const transport = await this.mcpServer.createTransport(session.id, res);
+          this.transports.set(session.id, transport);
 
           // Handle client disconnect
           req.on('close', () => {
             logger.info('SSE connection closed', { sessionId: session.id });
+            this.transports.delete(session.id);
             sessionManager.removeSession(session.id);
           });
 
-          // Keep connection alive
-          const keepAliveInterval = setInterval(() => {
-            res.write(':keepalive\n\n');
+          // Update activity periodically
+          const activityInterval = setInterval(() => {
             sessionManager.updateActivity(session.id);
           }, 30000); // 30 seconds
 
           req.on('close', () => {
-            clearInterval(keepAliveInterval);
+            clearInterval(activityInterval);
           });
         } catch (error) {
           logger.error('SSE connection error', {
             error: error instanceof Error ? error.message : 'Unknown error',
+            stack: error instanceof Error ? error.stack : undefined,
           });
           next(error);
         }
@@ -109,10 +107,11 @@ export class SSEServer {
       validateApiKey,
       async (req: Request, res: Response, next: NextFunction) => {
         try {
-          logger.debug('Received message', { body: req.body });
+          logger.debug('Received POST /messages', { body: req.body });
 
-          // The MCP SDK handles the message internally through the transport
-          // We just need to acknowledge receipt
+          // Find the session ID from the request
+          // The SSEServerTransport will handle the message through its own mechanisms
+          // We just acknowledge receipt
           res.status(202).json({ accepted: true });
         } catch (error) {
           logger.error('Message handling error', {
@@ -129,14 +128,18 @@ export class SSEServer {
         logger.error('Server error', {
           error: err.message,
           stack: err.stack,
+          path: req.path,
         });
 
-        res.status(500).json({
-          error: {
-            code: 'INTERNAL_ERROR',
-            message: 'An internal server error occurred',
-          },
-        });
+        // Don't send response if headers already sent (SSE case)
+        if (!res.headersSent) {
+          res.status(500).json({
+            error: {
+              code: 'INTERNAL_ERROR',
+              message: 'An internal server error occurred',
+            },
+          });
+        }
       }
     );
   }
