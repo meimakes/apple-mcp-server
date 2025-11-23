@@ -8,11 +8,14 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+// Calculate project root (dist -> project root)
+const projectRoot = join(__dirname, '..');
+
 export const config = {
   port: parseInt(process.env.PORT || '3000', 10),
   apiKey: process.env.API_KEY || '',
   logLevel: process.env.LOG_LEVEL || 'info',
-  swiftBinaryPath: join(__dirname, 'swift', 'bin', 'reminders-cli'),
+  swiftBinaryPath: join(projectRoot, 'src', 'swift', 'bin', 'reminders-cli'),
   sessionTimeout: 30 * 60 * 1000, // 30 minutes
   swiftCommandTimeout: 10000, // 10 seconds
 } as const;
