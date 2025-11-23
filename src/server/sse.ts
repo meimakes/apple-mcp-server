@@ -19,6 +19,9 @@ export class SSEServer {
   }
 
   private setupMiddleware(): void {
+    // Trust proxy for rate limiting and X-Forwarded-For headers (needed for ngrok)
+    this.app.set('trust proxy', 1);
+
     // Security headers
     this.app.use(helmet());
 
