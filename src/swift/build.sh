@@ -15,6 +15,7 @@ mkdir -p "$BIN_DIR"
 
 # Compile Swift files
 swiftc \
+  -parse-as-library \
   -o "$BIN_DIR/reminders-cli" \
   -framework EventKit \
   -framework Foundation \
