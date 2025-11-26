@@ -60,46 +60,49 @@ export class SSEServer {
       });
     });
 
-    // SSE endpoint (requires auth)
-    this.app.get(
-      '/sse',
-      validateApiKey,
-      async (req: Request, res: Response, next: NextFunction) => {
-        try {
-          logger.info('SSE connection request received', { ip: req.ip });
+    // SSE endpoint handler (shared between GET and POST)
+    const sseHandler = async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        logger.info('SSE connection request received', {
+          ip: req.ip,
+          method: req.method,
+        });
 
-          // Create session
-          const session = sessionManager.createSession();
-          logger.info('Session created', { sessionId: session.id });
+        // Create session
+        const session = sessionManager.createSession();
+        logger.info('Session created', { sessionId: session.id });
 
-          // Create MCP transport - this handles all SSE setup
-          const transport = await this.mcpServer.createTransport(session.id, res);
-          this.transports.set(session.id, transport);
+        // Create MCP transport - this handles all SSE setup
+        const transport = await this.mcpServer.createTransport(session.id, res);
+        this.transports.set(session.id, transport);
 
-          // Handle client disconnect
-          req.on('close', () => {
-            logger.info('SSE connection closed', { sessionId: session.id });
-            this.transports.delete(session.id);
-            sessionManager.removeSession(session.id);
-          });
+        // Handle client disconnect
+        req.on('close', () => {
+          logger.info('SSE connection closed', { sessionId: session.id });
+          this.transports.delete(session.id);
+          sessionManager.removeSession(session.id);
+        });
 
-          // Update activity periodically
-          const activityInterval = setInterval(() => {
-            sessionManager.updateActivity(session.id);
-          }, 30000); // 30 seconds
+        // Update activity periodically
+        const activityInterval = setInterval(() => {
+          sessionManager.updateActivity(session.id);
+        }, 30000); // 30 seconds
 
-          req.on('close', () => {
-            clearInterval(activityInterval);
-          });
-        } catch (error) {
-          logger.error('SSE connection error', {
-            error: error instanceof Error ? error.message : 'Unknown error',
-            stack: error instanceof Error ? error.stack : undefined,
-          });
-          next(error);
-        }
+        req.on('close', () => {
+          clearInterval(activityInterval);
+        });
+      } catch (error) {
+        logger.error('SSE connection error', {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          stack: error instanceof Error ? error.stack : undefined,
+        });
+        next(error);
       }
-    );
+    };
+
+    // SSE endpoint (requires auth) - support both GET and POST
+    this.app.get('/sse', validateApiKey, sseHandler);
+    this.app.post('/sse', validateApiKey, sseHandler);
 
     // Message endpoint (requires auth)
     this.app.post(
