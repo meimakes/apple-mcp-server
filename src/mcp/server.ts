@@ -4,7 +4,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import { Request, Response } from 'express';
+import { Response } from 'express';
 import logger from '../utils/logger.js';
 import swiftBridge from '../utils/swift-bridge.js';
 import tools from './tools.js';
@@ -87,24 +87,21 @@ export class MCPServerManager {
   /**
    * Create SSE transport for a client connection
    */
-  async createTransport(req: Request, res: Response): Promise<SSEServerTransport> {
-    logger.info('Creating SSE transport for client');
-
-    const transport = new SSEServerTransport('/messages', res);
-    await this.server.connect(transport);
+  async createTransport(sessionId: string, res: Response): Promise<SSEServerTransport> {
+    logger.info('Creating SSE transport', { sessionId });
 
     // Start Swift bridge if not already started
     await swiftBridge.start();
 
-    return transport;
-  }
+    // Create transport with /messages as the endpoint for client messages
+    const transport = new SSEServerTransport('/messages', res);
 
-  /**
-   * Handle incoming messages
-   */
-  async handleMessage(message: any): Promise<void> {
-    // Messages are handled by the transport/server automatically
-    logger.debug('Message received', { message });
+    // Connect the server to this transport
+    await this.server.connect(transport);
+
+    logger.info('SSE transport connected', { sessionId });
+
+    return transport;
   }
 
   /**
