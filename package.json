@@ -19,7 +19,7 @@
     "eventkit",
     "sse"
   ],
-  "author": "",
+  "author": "meimakes",
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",

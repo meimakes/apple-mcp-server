@@ -25,8 +25,8 @@ An MCP (Model Context Protocol) server that provides programmatic access to Appl
 1. **Clone the repository**
 
    ```bash
-   git clone <repository-url>
-   cd apple-reminders-mcp
+   git clone https://github.com/meimakes/apple-mcp-server.git
+   cd apple-mcp-server
    ```
 
 2. **Install dependencies**

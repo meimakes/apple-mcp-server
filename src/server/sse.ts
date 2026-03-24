@@ -102,17 +102,42 @@ export class SSEServer {
     );
 
     // Message endpoint (requires auth)
+    // SSEServerTransport registers its own POST handler via sessionId query param,
+    // but we need to route messages to the correct transport instance
     this.app.post(
       '/messages',
       validateApiKey,
       async (req: Request, res: Response, next: NextFunction) => {
         try {
-          logger.debug('Received POST /messages', { body: req.body });
+          logger.debug('Received POST /messages', {
+            body: req.body,
+            query: req.query,
+          });
 
-          // Find the session ID from the request
-          // The SSEServerTransport will handle the message through its own mechanisms
-          // We just acknowledge receipt
-          res.status(202).json({ accepted: true });
+          const sessionId = req.query.sessionId as string;
+          if (!sessionId) {
+            res.status(400).json({
+              error: {
+                code: 'MISSING_SESSION_ID',
+                message: 'sessionId query parameter is required',
+              },
+            });
+            return;
+          }
+
+          const transport = this.transports.get(sessionId);
+          if (!transport) {
+            res.status(404).json({
+              error: {
+                code: 'SESSION_NOT_FOUND',
+                message: 'No active session found for the given sessionId',
+              },
+            });
+            return;
+          }
+
+          // Forward the message to the SSE transport for handling
+          await transport.handlePostMessage(req, res);
         } catch (error) {
           logger.error('Message handling error', {
             error: error instanceof Error ? error.message : 'Unknown error',

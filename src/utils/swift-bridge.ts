@@ -14,10 +14,6 @@ export class SwiftBridge {
     timeout: NodeJS.Timeout;
   }> = [];
 
-  constructor() {
-    this.ensureBinaryExists();
-  }
-
   private ensureBinaryExists(): void {
     if (!existsSync(config.swiftBinaryPath)) {
       logger.error('Swift binary not found', { path: config.swiftBinaryPath });
