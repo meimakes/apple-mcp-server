@@ -11,10 +11,13 @@ import tools from './tools.js';
 import toolHandlers from './handlers.js';
 
 export class MCPServerManager {
-  private server: Server;
+  private servers: Map<string, Server> = new Map();
 
-  constructor() {
-    this.server = new Server(
+  /**
+   * Create a new MCP Server instance with handlers for a session
+   */
+  private createServerInstance(sessionId: string): Server {
+    const server = new Server(
       {
         name: 'apple-reminders-mcp',
         version: '1.0.0',
@@ -26,20 +29,16 @@ export class MCPServerManager {
       }
     );
 
-    this.setupHandlers();
-  }
-
-  private setupHandlers(): void {
     // Handle list tools request
-    this.server.setRequestHandler(ListToolsRequestSchema, async () => {
-      logger.debug('Listing available tools');
+    server.setRequestHandler(ListToolsRequestSchema, async () => {
+      logger.debug('Listing available tools', { sessionId });
       return { tools };
     });
 
     // Handle tool execution
-    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
-      logger.info('Executing tool', { name, args });
+      logger.info('Executing tool', { sessionId, name, args });
 
       try {
         const handler = toolHandlers[name];
@@ -61,6 +60,7 @@ export class MCPServerManager {
         const errorMessage =
           error instanceof Error ? error.message : 'Unknown error occurred';
         logger.error('Tool execution failed', {
+          sessionId,
           name,
           error: errorMessage,
         });
@@ -82,10 +82,13 @@ export class MCPServerManager {
         };
       }
     });
+
+    return server;
   }
 
   /**
-   * Create SSE transport for a client connection
+   * Create SSE transport for a client connection.
+   * Each session gets its own Server instance (MCP SDK requirement).
    */
   async createTransport(sessionId: string, res: Response): Promise<SSEServerTransport> {
     logger.info('Creating SSE transport', { sessionId });
@@ -93,11 +96,15 @@ export class MCPServerManager {
     // Start Swift bridge if not already started
     await swiftBridge.start();
 
+    // Create a dedicated Server instance for this session
+    const server = this.createServerInstance(sessionId);
+    this.servers.set(sessionId, server);
+
     // Create transport with /messages as the endpoint for client messages
     const transport = new SSEServerTransport('/messages', res);
 
     // Connect the server to this transport
-    await this.server.connect(transport);
+    await server.connect(transport);
 
     logger.info('SSE transport connected', { sessionId });
 
@@ -105,19 +112,27 @@ export class MCPServerManager {
   }
 
   /**
-   * Get the server instance
+   * Remove a session's server instance
    */
-  getServer(): Server {
-    return this.server;
+  async removeSession(sessionId: string): Promise<void> {
+    const server = this.servers.get(sessionId);
+    if (server) {
+      await server.close();
+      this.servers.delete(sessionId);
+      logger.info('Session server closed', { sessionId });
+    }
   }
 
   /**
-   * Shutdown the server
+   * Shutdown all server instances
    */
   async shutdown(): Promise<void> {
-    logger.info('Shutting down MCP server');
+    logger.info('Shutting down MCP server manager');
     await swiftBridge.stop();
-    await this.server.close();
+    for (const [sessionId, server] of this.servers) {
+      await server.close();
+      this.servers.delete(sessionId);
+    }
   }
 }
 

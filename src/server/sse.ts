@@ -1,4 +1,5 @@
 import express, { Request, Response, NextFunction } from 'express';
+import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import config from '../config.js';
@@ -10,7 +11,10 @@ import sessionManager from './session.js';
 export class SSEServer {
   private app: express.Application;
   private mcpServer: MCPServerManager;
-  private transports: Map<string, any> = new Map();
+  // Keyed by SSEServerTransport's internal sessionId (UUID), NOT our session manager's hex ID
+  private transports: Map<string, SSEServerTransport> = new Map();
+  // Maps transport sessionId → our session manager ID for cleanup
+  private transportToSession: Map<string, string> = new Map();
 
   constructor() {
     this.app = express();
@@ -26,8 +30,13 @@ export class SSEServer {
     // Security headers
     this.app.use(helmet());
 
-    // JSON parsing
-    this.app.use(express.json());
+    // JSON parsing — skip /messages route so SSEServerTransport can read the raw body
+    this.app.use((req, res, next) => {
+      if (req.path === '/messages') {
+        return next();
+      }
+      express.json()(req, res, next);
+    });
 
     // Rate limiting
     const limiter = rateLimit({
@@ -68,25 +77,36 @@ export class SSEServer {
         try {
           logger.info('SSE connection request received', { ip: req.ip });
 
-          // Create session
+          // Create session in our manager
           const session = sessionManager.createSession();
           logger.info('Session created', { sessionId: session.id });
 
-          // Create MCP transport - this handles all SSE setup
+          // Create MCP transport — each gets its own Server instance
           const transport = await this.mcpServer.createTransport(session.id, res);
-          this.transports.set(session.id, transport);
+
+          // Store transport by its OWN sessionId (the UUID the client will use)
+          const transportSessionId = transport.sessionId;
+          this.transports.set(transportSessionId, transport);
+          this.transportToSession.set(transportSessionId, session.id);
+
+          logger.info('Transport registered', {
+            ourSessionId: session.id,
+            transportSessionId,
+          });
 
           // Handle client disconnect
           req.on('close', () => {
-            logger.info('SSE connection closed', { sessionId: session.id });
-            this.transports.delete(session.id);
+            logger.info('SSE connection closed', { transportSessionId });
+            this.transports.delete(transportSessionId);
+            this.transportToSession.delete(transportSessionId);
+            this.mcpServer.removeSession(session.id);
             sessionManager.removeSession(session.id);
           });
 
           // Update activity periodically
           const activityInterval = setInterval(() => {
             sessionManager.updateActivity(session.id);
-          }, 30000); // 30 seconds
+          }, 30000);
 
           req.on('close', () => {
             clearInterval(activityInterval);
@@ -102,18 +122,12 @@ export class SSEServer {
     );
 
     // Message endpoint (requires auth)
-    // SSEServerTransport registers its own POST handler via sessionId query param,
-    // but we need to route messages to the correct transport instance
+    // Routes POST messages to the correct SSEServerTransport by its sessionId
     this.app.post(
       '/messages',
       validateApiKey,
       async (req: Request, res: Response, next: NextFunction) => {
         try {
-          logger.debug('Received POST /messages', {
-            body: req.body,
-            query: req.query,
-          });
-
           const sessionId = req.query.sessionId as string;
           if (!sessionId) {
             res.status(400).json({
@@ -127,6 +141,10 @@ export class SSEServer {
 
           const transport = this.transports.get(sessionId);
           if (!transport) {
+            logger.warn('Transport not found for sessionId', {
+              sessionId,
+              knownSessions: Array.from(this.transports.keys()),
+            });
             res.status(404).json({
               error: {
                 code: 'SESSION_NOT_FOUND',
